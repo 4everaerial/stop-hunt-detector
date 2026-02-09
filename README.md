@@ -1,8 +1,10 @@
 # Stop-Hunt Detector — Market Stress Detection System
 
 **Experiment ID:** `f3c1c4d4`  
-**Status:** 🚧 Day 1 Build Phase  
+**Status:** ✅ Day 1 Complete  
 **Timebox:** 7 days build + 7 days validate
+
+**Repository:** https://github.com/4everaerial/stop-hunt-detector
 
 ---
 
@@ -129,9 +131,19 @@ MIT License — See [LICENSE](LICENSE)
 
 ## Build Status
 
-**Day 1 (Current):**
+**Day 1 (Complete):**
 - [x] Project structure
-- [ ] Data ingestion pipeline
-- [ ] Volatility compression signal
-- [ ] Basic stress score composition
-- [ ] Labeled state output
+- [x] Data ingestion pipeline (fetch_binance.py + mock_generator.py for testing)
+- [x] Volatility compression signal
+- [x] Liquidity fragility signal
+- [x] Continuation failure signal
+- [x] Speed asymmetry signal
+- [x] Basic stress score composition
+- [x] Labeled state output
+- [x] Validation framework (backtest, correlation, report)
+
+**Day 2 (Upcoming):**
+- [ ] Fine-tune signal weights empirically
+- [ ] Test on multiple pairs
+- [ ] Generate stress score visualizations
+- [ ] Document methodology in README
