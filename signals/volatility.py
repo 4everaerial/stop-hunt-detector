@@ -1,203 +1,165 @@
 """
-Volatility compression signal.
+Volatility Compression Signal
 
-Measures range tightening and ATR decay. Volatility compression often precedes
-sudden market moves.
+Detects when trading range tightens and volatility decays - a classic
+precursor to explosive price moves and stop hunts.
+
+Mechanism:
+- Bollinger Band squeeze: width narrows significantly
+- ATR decay: True Range decreases over time
+- Range contraction: High-Low range shrinks relative to price
+
+Score: 0.0 (normal) → 1.0 (severely compressed)
 """
 
 import pandas as pd
 import numpy as np
+from typing import Tuple
 
 
-def calculate_atr(df, period=14):
+class VolatilityCompression:
     """
-    Calculate Average True Range (ATR).
+    Measures volatility compression as a precursor to stop hunts.
 
-    Args:
-        df: DataFrame with OHLC data
-        period: ATR period
-
-    Returns:
-        Series with ATR values
+    High volatility compression scores indicate that the market is
+    "coiling up" and may soon explode in either direction.
     """
-    high = df['high']
-    low = df['low']
-    close = df['close']
 
-    # Calculate True Range
-    tr1 = high - low
-    tr2 = abs(high - close.shift(1))
-    tr3 = abs(low - close.shift(1))
-
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    # Calculate ATR using RMA (Rolling Moving Average)
-    atr = tr.rolling(window=period).mean()
-
-    return atr
-
-
-def calculate_bollinger_bands(df, period=20, std_dev=2):
-    """
-    Calculate Bollinger Bands.
-
-    Args:
-        df: DataFrame with close prices
-        period: Moving average period
-        std_dev: Standard deviation multiplier
-
-    Returns:
-        Tuple of (upper_band, middle_band, lower_band, bandwidth)
-    """
-    middle = df['close'].rolling(window=period).mean()
-    std = df['close'].rolling(window=period).std()
-
-    upper = middle + (std * std_dev)
-    lower = middle - (std * std_dev)
-
-    # Bandwidth: (upper - lower) / middle
-    bandwidth = (upper - lower) / middle
-
-    return upper, middle, lower, bandwidth
-
-
-def calculate_range_compression(df, period=20):
-    """
-    Calculate price range compression.
-
-    Compares current high-low range to average range over period.
-
-    Args:
-        df: DataFrame with OHLC data
-        period: Lookback period
-
-    Returns:
-        Series with range compression ratio (0-1, lower = more compressed)
-    """
-    current_range = df['high'] - df['low']
-    avg_range = current_range.rolling(window=period).mean()
-
-    # Compression ratio: current / avg
-    # Lower values indicate more compression
-    compression = current_range / avg_range
-
-    return compression
-
-
-def calculate_atr_decay(df, short_period=10, long_period=50):
-    """
-    Calculate ATR decay rate.
-
-    Compares short-term ATR to long-term ATR. Lower ratio indicates
-    volatility compression.
-
-    Args:
-        df: DataFrame with OHLC data
-        short_period: Short ATR period
-        long_period: Long ATR period
-
-    Returns:
-        Series with ATR decay ratio (0-1, lower = more decay)
-    """
-    short_atr = calculate_atr(df, short_period)
-    long_atr = calculate_atr(df, long_period)
-
-    decay = short_atr / long_atr
-
-    return decay
-
-
-class VolatilitySignal:
-    """Calculate volatility compression stress signal."""
-
-    def __init__(self, atr_short=10, atr_long=50, bb_period=20, range_period=20):
+    def __init__(
+        self,
+        bb_period: int = 20,
+        bb_std: float = 2.0,
+        atr_period: int = 14,
+        lookback: int = 100
+    ):
         """
-        Initialize volatility signal.
+        Initialize volatility compression detector.
 
         Args:
-            atr_short: Short-term ATR period
-            atr_long: Long-term ATR period
-            bb_period: Bollinger Bands period
-            range_period: Range compression lookback
+            bb_period: Bollinger Band period (default: 20)
+            bb_std: Bollinger Band standard deviations (default: 2.0)
+            atr_period: ATR period (default: 14)
+            lookback: Lookback period for compression calculation (default: 100)
         """
-        self.atr_short = atr_short
-        self.atr_long = atr_long
         self.bb_period = bb_period
-        self.range_period = range_period
+        self.bb_std = bb_std
+        self.atr_period = atr_period
+        self.lookback = lookback
 
-    def calculate(self, df):
+    def calculate(self, df: pd.DataFrame) -> pd.Series:
         """
-        Calculate volatility compression signal.
+        Calculate volatility compression score for each candle.
 
-        Returns DataFrame with new columns:
-        - atr_short: Short-term ATR
-        - atr_long: Long-term ATR
-        - atr_decay: ATR decay ratio
-        - bb_bandwidth: Bollinger Band width
-        - range_compression: Price range compression
-        - volatility_score: Normalized stress score (0-1)
+        Args:
+            df: DataFrame with OHLCV data (columns: open, high, low, close)
+
+        Returns:
+            Series of compression scores (0.0 → 1.0)
+        """
+        df = df.copy()
+
+        # Calculate True Range (ATR component)
+        df['tr'] = self._true_range(df)
+        df['atr'] = df['tr'].rolling(self.atr_period).mean()
+
+        # Calculate Bollinger Bands
+        df['sma'] = df['close'].rolling(self.bb_period).mean()
+        df['std'] = df['close'].rolling(self.bb_period).std()
+        df['upper'] = df['sma'] + (df['std'] * self.bb_std)
+        df['lower'] = df['sma'] - (df['std'] * self.bb_std)
+        df['bb_width'] = (df['upper'] - df['lower']) / df['sma']
+
+        # Calculate High-Low range as % of price
+        df['hl_range'] = (df['high'] - df['low']) / df['close']
+
+        # Normalized signals (0 = wide/volatile, 1 = compressed)
+        df['bb_squeeze'] = self._normalize_inverse(df['bb_width'].rolling(self.lookback))
+        df['atr_decay'] = self._normalize_inverse(df['atr'].rolling(self.lookback))
+        df['range_contraction'] = self._normalize_inverse(df['hl_range'].rolling(self.lookback))
+
+        # Composite score (equal weight for now)
+        df['compression'] = (
+            df['bb_squeeze'] * 0.4 +
+            df['atr_decay'] * 0.3 +
+            df['range_contraction'] * 0.3
+        )
+
+        return df['compression']
+
+    def _true_range(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate True Range (max of high-low, high-prev_close, low-prev_close)."""
+        prev_close = df['close'].shift(1)
+        tr1 = df['high'] - df['low']
+        tr2 = (df['high'] - prev_close).abs()
+        tr3 = (df['low'] - prev_close).abs()
+        return pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    def _normalize_inverse(self, rolling_obj) -> pd.Series:
+        """
+        Normalize rolling metric inverse (low values → high score).
+
+        Low volatility/width should give high compression score.
+        """
+        series = rolling_obj.min()  # Get minimum over window
+
+        # Inverse normalization: current / max gives 0-1, but we want inverse
+        # So we use: max - current / (max - min) with clamping
+        rolling_max = rolling_obj.max()
+        rolling_min = rolling_obj.min()
+
+        # Handle edge case where max = min
+        normalized = np.where(
+            rolling_max == rolling_min,
+            0.5,  # Middle value when no variation
+            (rolling_max - series) / (rolling_max - rolling_min)
+        )
+
+        return pd.Series(normalized, index=series.index)
+
+    def get_current_state(self, df: pd.DataFrame) -> Tuple[float, str]:
+        """
+        Get current compression score and label.
 
         Args:
             df: DataFrame with OHLCV data
 
         Returns:
-            DataFrame with volatility signals
+            Tuple of (score, label)
         """
-        df = df.copy()
+        if len(df) < self.lookback:
+            return 0.0, "INSUFFICIENT_DATA"
 
-        # Calculate ATRs
-        df['atr_short'] = calculate_atr(df, self.atr_short)
-        df['atr_long'] = calculate_atr(df, self.atr_long)
-        df['atr_decay'] = calculate_atr_decay(df, self.atr_short, self.atr_long)
+        compression = self.calculate(df)
+        latest_score = compression.iloc[-1]
 
-        # Calculate Bollinger Bands
-        upper, middle, lower, bandwidth = calculate_bollinger_bands(
-            df, self.bb_period
-        )
-        df['bb_bandwidth'] = bandwidth
+        if latest_score < 0.3:
+            label = "NORMAL"
+        elif latest_score < 0.6:
+            label = "COMPRESSING"
+        elif latest_score < 0.8:
+            label = "TIGHT"
+        else:
+            label = "COILED"
 
-        # Calculate range compression
-        df['range_compression'] = calculate_range_compression(df, self.range_period)
-
-        # Normalize indicators to 0-1 (inverted: higher = more stress)
-        # ATR decay: lower ratio = more compression = more stress
-        df['atr_decay_norm'] = 1 - df['atr_decay'].clip(0, 1)
-
-        # BB bandwidth: lower width = more compression = more stress
-        bb_median = df['bb_bandwidth'].rolling(window=50).median()
-        df['bb_bandwidth_norm'] = (bb_median - df['bb_bandwidth']).clip(lower=0)
-        df['bb_bandwidth_norm'] = df['bb_bandwidth_norm'] / df['bb_bandwidth_norm'].max()
-
-        # Range compression: lower ratio = more compression = more stress
-        df['range_compression_norm'] = 1 - df['range_compression'].clip(0, 1)
-
-        # Composite volatility score (equal weights)
-        df['volatility_score'] = (
-            df['atr_decay_norm'].fillna(0) * 0.34 +
-            df['bb_bandwidth_norm'].fillna(0) * 0.33 +
-            df['range_compression_norm'].fillna(0) * 0.33
-        )
-
-        # Clip to 0-1 range
-        df['volatility_score'] = df['volatility_score'].clip(0, 1)
-
-        return df
+        return latest_score, label
 
 
-# Backward compatibility
-def calculate_volatility_signal(df, atr_short=10, atr_long=50, bb_period=20, range_period=20):
-    """
-    Calculate volatility compression signal (functional API).
+if __name__ == "__main__":
+    # Example usage
+    from data.fetch_binance import BinanceFetcher
 
-    Args:
-        df: DataFrame with OHLCV data
-        atr_short: Short-term ATR period
-        atr_long: Long-term ATR period
-        bb_period: Bollinger Bands period
-        range_period: Range compression lookback
+    # Fetch some data
+    fetcher = BinanceFetcher()
+    df = fetcher.load_data('BTCUSDT', '1h')
 
-    Returns:
-        DataFrame with volatility signals
-    """
-    signal = VolatilitySignal(atr_short, atr_long, bb_period, range_period)
-    return signal.calculate(df)
+    if df is not None:
+        # Calculate compression
+        vc = VolatilityCompression()
+        df['compression'] = vc.calculate(df)
+
+        print(f"Latest compression score: {df['compression'].iloc[-1]:.3f}")
+        print(f"Average compression: {df['compression'].mean():.3f}")
+
+        # Get current state
+        score, label = vc.get_current_state(df)
+        print(f"\nCurrent state: {label} (score: {score:.3f})")

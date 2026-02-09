@@ -1,231 +1,185 @@
 """
-Speed asymmetry signal.
+Speed Asymmetry Signal
 
-Measures down-move vs up-move velocity. Panic selling is faster than
-panic buying.
+Detects when downward price moves are faster and stronger than
+upward moves - a hallmark of panic selling and liquidations.
+
+Mechanism:
+- Downward velocity vs upward velocity
+- Downward magnitude vs upward magnitude
+- Negative candle acceleration
+
+Score: 0.0 (balanced) → 1.0 (strongly biased downward)
 """
 
 import pandas as pd
 import numpy as np
+from typing import Tuple
 
 
-def calculate_down_velocity(df, period=5):
+class SpeedAsymmetry:
     """
-    Calculate down-move velocity.
+    Measures speed asymmetry between up and down moves.
 
-    Measures how fast price drops during down candles.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: Lookback period
-
-    Returns:
-        Series with down velocity (same index as input df)
+    High speed asymmetry indicates panic selling and
+    liquidation-driven downward pressure.
     """
-    # Calculate price change
-    close = df['close']
 
-    # Calculate price change
-    change = close.pct_change(period).abs()
-
-    # Filter down candles (close < open)
-    is_down = df['close'] < df['open']
-
-    # Set non-down candles to NaN
-    down_change = change.where(is_down)
-
-    return down_change
-
-
-def calculate_up_velocity(df, period=5):
-    """
-    Calculate up-move velocity.
-
-    Measures how fast price rises during up candles.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: Lookback period
-
-    Returns:
-        Series with up velocity (same index as input df)
-    """
-    # Calculate price change
-    close = df['close']
-
-    # Calculate price change
-    change = close.pct_change(period)
-
-    # Filter up candles (close > open)
-    is_up = df['close'] > df['open']
-
-    # Set non-up candles to NaN
-    up_change = change.where(is_up)
-
-    return up_change
-
-
-def calculate_velocity_asymmetry(df, period=5):
-    """
-    Calculate velocity asymmetry (down vs up).
-
-    Panic selling is typically faster than panic buying.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: Lookback period
-
-    Returns:
-        Series with asymmetry score (0-1, higher = more asymmetry)
-    """
-    # Calculate absolute price changes
-    close = df['close']
-    change = close.pct_change(period).abs()
-
-    # Separate down and up candle changes
-    is_down = df['close'] < df['open']
-    is_up = df['close'] > df['open']
-
-    down_change = change.where(is_down, 0)
-    up_change = change.where(is_up, 0)
-
-    # Calculate rolling sums
-    down_sum = down_change.rolling(window=period).sum()
-    up_sum = up_change.rolling(window=period).sum()
-
-    # Asymmetry ratio: down / (up + epsilon)
-    asymmetry = down_sum / (up_sum + 1e-6)
-
-    # Normalize (clipping outliers)
-    asymmetry = asymmetry.clip(0, 5) / 5
-
-    return asymmetry
-
-
-def calculate_drawdown_speed(df, period=20):
-    """
-    Calculate maximum drawdown speed.
-
-    Measures how fast price drops from recent highs.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: Lookback period
-
-    Returns:
-        Series with drawdown speed (0-1, higher = faster drawdown)
-    """
-    close = df['close']
-
-    # Calculate rolling maximum
-    rolling_max = close.rolling(window=period).max()
-
-    # Calculate drawdown
-    drawdown = (rolling_max - close) / rolling_max
-
-    # Calculate drawdown speed (change in drawdown)
-    drawdown_speed = drawdown.diff(period).abs()
-
-    # Normalize
-    drawdown_speed_norm = drawdown_speed / drawdown_speed.rolling(window=50).max()
-
-    return drawdown_speed_norm
-
-
-def calculate_volume_weighted_direction(df, period=10):
-    """
-    Calculate volume-weighted price direction.
-
-    Down moves with high volume indicate panic selling.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: Lookback period
-
-    Returns:
-        Series with direction score (0-1, negative + high volume = high stress)
-    """
-    # Calculate price change
-    change = df['close'].pct_change()
-
-    # Weight by volume
-    volume_change = change * df['volume']
-
-    # Calculate rolling sum
-    weighted_change = volume_change.rolling(window=period).sum()
-
-    # Normalize: negative = more stress
-    direction_score = (-weighted_change).clip(lower=0)
-    direction_score = direction_score / direction_score.rolling(window=50).max()
-
-    return direction_score
-
-
-class SpeedSignal:
-    """Calculate speed asymmetry stress signal."""
-
-    def __init__(self, velocity_period=5, drawdown_period=20, direction_period=10):
+    def __init__(
+        self,
+        lookback: int = 20,
+        velocity_window: int = 5
+    ):
         """
-        Initialize speed signal.
+        Initialize speed asymmetry detector.
 
         Args:
-            velocity_period: Velocity lookback period
-            drawdown_period: Drawdown lookback period
-            direction_period: Volume-weighted direction lookback
+            lookback: Lookback period for normalization (default: 20)
+            velocity_window: Window for velocity calculation (default: 5)
         """
-        self.velocity_period = velocity_period
-        self.drawdown_period = drawdown_period
-        self.direction_period = direction_period
+        self.lookback = lookback
+        self.velocity_window = velocity_window
 
-    def calculate(self, df):
+    def calculate(self, df: pd.DataFrame) -> pd.Series:
         """
-        Calculate speed asymmetry signal.
+        Calculate speed asymmetry score for each candle.
 
-        Returns DataFrame with new columns:
-        - velocity_asymmetry: Down vs up velocity ratio
-        - drawdown_speed: Maximum drawdown speed
-        - volume_direction: Volume-weighted direction score
-        - speed_score: Normalized stress score (0-1)
+        Args:
+            df: DataFrame with OHLCV data (columns: open, close)
+
+        Returns:
+            Series of speed asymmetry scores (0.0 → 1.0)
+        """
+        df = df.copy()
+
+        # Classify candles as up or down
+        df['is_up'] = df['close'] > df['open']
+        df['is_down'] = df['close'] < df['open']
+
+        # Calculate price change magnitude
+        df['change'] = df['close'] - df['open']
+        df['change_abs'] = df['change'].abs()
+
+        # Calculate velocity (change per candle)
+        df['velocity'] = df['change']
+
+        # Separate up and down moves
+        df['down_change'] = np.where(df['is_down'], df['change_abs'], 0)
+        df['up_change'] = np.where(df['is_up'], df['change_abs'], 0)
+
+        df['down_velocity'] = np.where(df['is_down'], df['change'], 0)
+        df['up_velocity'] = np.where(df['is_up'], df['change'], 0)
+
+        # Rolling metrics
+        down_magnitude = df['down_change'].rolling(self.lookback).sum()
+        up_magnitude = df['up_change'].rolling(self.lookback).sum()
+
+        down_velocity_avg = df['down_velocity'].rolling(self.lookback).mean()
+        up_velocity_avg = df['up_velocity'].rolling(self.lookback).mean()
+
+        # Calculate asymmetry ratios
+        df['magnitude_asymmetry'] = self._calculate_asymmetry_ratio(
+            down_magnitude,
+            up_magnitude
+        )
+
+        df['velocity_asymmetry'] = self._calculate_asymmetry_ratio(
+            down_velocity_avg.abs(),
+            up_velocity_avg.abs()
+        )
+
+        # Negative candle acceleration (increasing down candles)
+        df['down_candle_count'] = df['is_down'].rolling(self.velocity_window).sum()
+        df['up_candle_count'] = df['is_up'].rolling(self.velocity_window).sum()
+
+        df['candle_asymmetry'] = self._calculate_asymmetry_ratio(
+            df['down_candle_count'],
+            df['up_candle_count']
+        )
+
+        # Composite score (all normalized 0-1)
+        df['speed_asymmetry'] = (
+            df['magnitude_asymmetry'] * 0.4 +
+            df['velocity_asymmetry'] * 0.4 +
+            df['candle_asymmetry'] * 0.2
+        )
+
+        return df['speed_asymmetry']
+
+    def _calculate_asymmetry_ratio(
+        self,
+        down_metric: pd.Series,
+        up_metric: pd.Series
+    ) -> pd.Series:
+        """
+        Calculate asymmetry ratio (down / total).
+
+        Returns 0.5 when balanced, approaches 1.0 when heavily down.
+        """
+        total = down_metric + up_metric
+
+        # Avoid division by zero
+        ratio = np.where(
+            total > 0,
+            down_metric / total,
+            0.5  # Balanced when no data
+        )
+
+        # Normalize: 0.5 is balanced, map 0.0-1.0 to 0.0-1.0
+        # ratio > 0.5 means more down, ratio < 0.5 means more up
+        # We only care about down-biased asymmetry, so max(0.5, ratio) gives us 0.5-1.0
+        # Then we map 0.5-1.0 to 0.0-1.0
+        normalized = (ratio - 0.5) * 2
+
+        # Clamp to 0-1
+        normalized = normalized.clip(0, 1)
+
+        return pd.Series(normalized, index=down_metric.index)
+
+    def get_current_state(self, df: pd.DataFrame) -> Tuple[float, str]:
+        """
+        Get current speed asymmetry score and label.
 
         Args:
             df: DataFrame with OHLCV data
 
         Returns:
-            DataFrame with speed signals
+            Tuple of (score, label)
         """
-        df = df.copy()
+        if len(df) < self.lookback:
+            return 0.0, "INSUFFICIENT_DATA"
 
-        # Calculate individual indicators
-        df['velocity_asymmetry'] = calculate_velocity_asymmetry(df, self.velocity_period)
-        df['drawdown_speed'] = calculate_drawdown_speed(df, self.drawdown_period)
-        df['volume_direction'] = calculate_volume_weighted_direction(df, self.direction_period)
+        asymmetry = self.calculate(df)
+        latest_score = asymmetry.iloc[-1]
 
-        # Composite speed score (equal weights)
-        df['speed_score'] = (
-            df['velocity_asymmetry'].fillna(0) * 0.34 +
-            df['drawdown_speed'].fillna(0) * 0.33 +
-            df['volume_direction'].fillna(0) * 0.33
-        )
+        if latest_score < 0.3:
+            label = "BALANCED"
+        elif latest_score < 0.6:
+            label = "TILTING_DOWN"
+        elif latest_score < 0.8:
+            label = "DOWNWARD_PRESSURE"
+        else:
+            label = "PANIC_SELLING"
 
-        # Clip to 0-1 range
-        df['speed_score'] = df['speed_score'].clip(0, 1)
-
-        return df
+        return latest_score, label
 
 
-# Backward compatibility
-def calculate_speed_signal(df, velocity_period=5, drawdown_period=20, direction_period=10):
-    """
-    Calculate speed asymmetry signal (functional API).
+if __name__ == "__main__":
+    # Example usage
+    from data.fetch_binance import BinanceFetcher
 
-    Args:
-        df: DataFrame with OHLCV data
-        velocity_period: Velocity lookback period
-        drawdown_period: Drawdown lookback period
-        direction_period: Volume-weighted direction lookback
+    # Fetch some data
+    fetcher = BinanceFetcher()
+    df = fetcher.load_data('BTCUSDT', '1h')
 
-    Returns:
-        DataFrame with speed signals
-    """
-    signal = SpeedSignal(velocity_period, drawdown_period, direction_period)
-    return signal.calculate(df)
+    if df is not None:
+        # Calculate speed asymmetry
+        sa = SpeedAsymmetry()
+        df['speed_asymmetry'] = sa.calculate(df)
+
+        print(f"Latest speed asymmetry score: {df['speed_asymmetry'].iloc[-1]:.3f}")
+        print(f"Average speed asymmetry: {df['speed_asymmetry'].mean():.3f}")
+
+        # Get current state
+        score, label = sa.get_current_state(df)
+        print(f"\nCurrent state: {label} (score: {score:.3f})")

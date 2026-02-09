@@ -1,115 +1,215 @@
 """
-Composite stress score calculation.
+Composite Stress Score Calculator
 
-Combines all stress signals into a single stress score (0.0→1.0).
+Combines individual stress signals into a unified stress score (0.0 → 1.0).
+This is the core output of the detector system.
 """
 
 import pandas as pd
 import numpy as np
+from typing import Dict, Tuple, Optional
+from signals import (
+    VolatilityCompression,
+    LiquidityFragility,
+    ContinuationFailure,
+    SpeedAsymmetry
+)
 
 
-class StressScoreDetector:
-    """Calculate composite market stress score from individual signals."""
+class StressCalculator:
+    """
+    Calculates a composite market stress score from individual signals.
 
-    def __init__(self, weights=None):
+    The stress score (0.0 → 1.0) represents the probability of imminent
+    forced-liquidation / stop-hunt events based on market conditions.
+    """
+
+    # Signal weights (can be tuned empirically)
+    DEFAULT_WEIGHTS = {
+        'volatility': 0.3,      # Volatility compression
+        'liquidity': 0.3,       # Liquidity fragility
+        'continuation': 0.2,    # Continuation failure
+        'speed': 0.2            # Speed asymmetry
+    }
+
+    def __init__(
+        self,
+        weights: Optional[Dict[str, float]] = None,
+        **signal_params
+    ):
         """
-        Initialize stress score detector.
+        Initialize stress calculator.
 
         Args:
-            weights: Dictionary of signal weights (default: equal weights)
-                     e.g., {'volatility': 0.25, 'liquidity': 0.25, ...}
+            weights: Signal weights (default: equal weighting)
+            **signal_params: Parameters passed to individual signal detectors
         """
-        if weights is None:
-            # Equal weights by default
-            self.weights = {
-                'volatility': 0.25,
-                'liquidity': 0.25,
-                'continuation': 0.25,
-                'speed': 0.25
-            }
-        else:
-            self.weights = weights
+        self.weights = weights or self.DEFAULT_WEIGHTS
 
-    def calculate_stress_score(self, df):
+        # Validate weights sum to 1.0
+        total_weight = sum(self.weights.values())
+        if not np.isclose(total_weight, 1.0):
+            raise ValueError(f"Signal weights must sum to 1.0, got {total_weight}")
+
+        # Initialize signal detectors
+        self.volatility = VolatilityCompression(**signal_params)
+        self.liquidity = LiquidityFragility(**signal_params)
+        self.continuation = ContinuationFailure(**signal_params)
+        self.speed = SpeedAsymmetry(**signal_params)
+
+    def calculate(self, df: pd.DataFrame) -> pd.Series:
         """
-        Calculate composite stress score from signal columns.
-
-        Expects DataFrame with columns:
-        - volatility_score (0-1)
-        - liquidity_score (0-1)
-        - continuation_score (0-1)
-        - speed_score (0-1)
-
-        Returns DataFrame with:
-        - stress_score: Composite score (0-1)
-        - signal_breakdown: Individual signal contributions
+        Calculate composite stress score for each candle.
 
         Args:
-            df: DataFrame with individual signal scores
+            df: DataFrame with OHLCV data (columns: open, high, low, close, volume)
 
         Returns:
-            DataFrame with composite stress score
+            Series of stress scores (0.0 → 1.0)
         """
         df = df.copy()
 
-        # Check if all required columns exist
-        required_cols = ['volatility_score', 'liquidity_score',
-                        'continuation_score', 'speed_score']
+        # Calculate individual signals
+        df['signal_volatility'] = self.volatility.calculate(df)
+        df['signal_liquidity'] = self.liquidity.calculate(df)
+        df['signal_continuation'] = self.continuation.calculate(df)
+        df['signal_speed'] = self.speed.calculate(df)
 
-        missing_cols = [col for col in required_cols if col not in df.columns]
-
-        if missing_cols:
-            # If signals not calculated yet, return zeros
-            for col in required_cols:
-                df[col] = 0.0
-            print(f"Warning: Missing signal columns: {missing_cols}. Setting to 0.")
-
-        # Calculate weighted composite score
+        # Calculate composite stress score
         df['stress_score'] = (
-            df['volatility_score'].fillna(0) * self.weights['volatility'] +
-            df['liquidity_score'].fillna(0) * self.weights['liquidity'] +
-            df['continuation_score'].fillna(0) * self.weights['continuation'] +
-            df['speed_score'].fillna(0) * self.weights['speed']
+            df['signal_volatility'] * self.weights['volatility'] +
+            df['signal_liquidity'] * self.weights['liquidity'] +
+            df['signal_continuation'] * self.weights['continuation'] +
+            df['signal_speed'] * self.weights['speed']
         )
 
-        # Clip to 0-1 range
-        df['stress_score'] = df['stress_score'].clip(0, 1)
+        return df['stress_score']
 
-        # Add signal breakdown for debugging
-        df['signal_breakdown'] = df.apply(
-            lambda row: f"V:{row['volatility_score']:.2f}|L:{row['liquidity_score']:.2f}|C:{row['continuation_score']:.2f}|S:{row['speed_score']:.2f}",
-            axis=1
-        )
-
-        return df
-
-    def update_weights(self, new_weights):
+    def calculate_with_details(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.DataFrame]:
         """
-        Update signal weights.
+        Calculate stress score and return detailed component breakdown.
 
         Args:
-            new_weights: Dictionary of new weights
+            df: DataFrame with OHLCV data
+
+        Returns:
+            Tuple of (stress_score Series, details DataFrame with all components)
         """
-        total = sum(new_weights.values())
-        if abs(total - 1.0) > 0.01:
-            print(f"Warning: Weights sum to {total:.3f}, normalizing to 1.0")
-            for key in new_weights:
-                new_weights[key] = new_weights[key] / total
+        # Re-calculate signals to get df with all columns
+        df_working = df.copy()
+        df_working['signal_volatility'] = self.volatility.calculate(df_working)
+        df_working['signal_liquidity'] = self.liquidity.calculate(df_working)
+        df_working['signal_continuation'] = self.continuation.calculate(df_working)
+        df_working['signal_speed'] = self.speed.calculate(df_working)
+        df_working['stress_score'] = (
+            df_working['signal_volatility'] * self.weights['volatility'] +
+            df_working['signal_liquidity'] * self.weights['liquidity'] +
+            df_working['signal_continuation'] * self.weights['continuation'] +
+            df_working['signal_speed'] * self.weights['speed']
+        )
 
-        self.weights = new_weights
-        print(f"Updated weights: {self.weights}")
+        details = df_working[[
+            'signal_volatility',
+            'signal_liquidity',
+            'signal_continuation',
+            'signal_speed',
+            'stress_score'
+        ]].copy()
+
+        return df_working['stress_score'], details
+
+    def get_current_stress(self, df: pd.DataFrame) -> Tuple[float, Dict[str, float]]:
+        """
+        Get current stress score and component breakdown.
+
+        Args:
+            df: DataFrame with OHLCV data
+
+        Returns:
+            Tuple of (current stress score, component values dict)
+        """
+        stress_score, details = self.calculate_with_details(df)
+
+        current_score = stress_score.iloc[-1]
+
+        components = {
+            'volatility': details['signal_volatility'].iloc[-1],
+            'liquidity': details['signal_liquidity'].iloc[-1],
+            'continuation': details['signal_continuation'].iloc[-1],
+            'speed': details['signal_speed'].iloc[-1]
+        }
+
+        return current_score, components
+
+    def find_high_stress_periods(
+        self,
+        df: pd.DataFrame,
+        threshold: float = 0.7,
+        min_duration: int = 1
+    ) -> pd.DataFrame:
+        """
+        Find periods where stress exceeded threshold.
+
+        Args:
+            df: DataFrame with OHLCV data
+            threshold: Stress score threshold (default: 0.7)
+            min_duration: Minimum candle count (default: 1)
+
+        Returns:
+            DataFrame with high-stress periods (start, end, duration, peak_stress)
+        """
+        df = df.copy()
+        df['stress_score'] = self.calculate(df)
+
+        # Find candles above threshold
+        df['above_threshold'] = df['stress_score'] >= threshold
+
+        # Find contiguous periods
+        df['period_id'] = (df['above_threshold'] != df['above_threshold'].shift()).cumsum()
+        df['above_threshold_shifted'] = df['above_threshold'].shift()
+
+        # Filter to periods above threshold
+        high_stress = df[df['above_threshold']].copy()
+
+        if high_stress.empty:
+            return pd.DataFrame(columns=['start', 'end', 'duration', 'peak_stress'])
+
+        # Group by period
+        periods = high_stress.groupby('period_id').agg({
+            'timestamp': ['min', 'max'],
+            'stress_score': 'max',
+            'period_id': 'count'
+        }).reset_index()
+
+        periods.columns = ['period_id', 'start', 'end', 'peak_stress', 'duration']
+
+        # Filter by minimum duration
+        periods = periods[periods['duration'] >= min_duration]
+
+        return periods[['start', 'end', 'duration', 'peak_stress']]
 
 
-def calculate_stress_score(df, weights=None):
-    """
-    Calculate composite stress score (functional API).
+if __name__ == "__main__":
+    # Example usage
+    from data.fetch_binance import BinanceFetcher
 
-    Args:
-        df: DataFrame with individual signal scores
-        weights: Dictionary of signal weights
+    # Fetch some data
+    fetcher = BinanceFetcher()
+    df = fetcher.load_data('BTCUSDT', '1h')
 
-    Returns:
-        DataFrame with composite stress score
-    """
-    detector = StressScoreDetector(weights)
-    return detector.calculate_stress_score(df)
+    if df is not None:
+        # Calculate stress score
+        calculator = StressCalculator()
+        stress_score, details = calculator.calculate_with_details(df)
+
+        print(f"Latest stress score: {stress_score.iloc[-1]:.3f}")
+        print(f"\nComponent breakdown:")
+        current_score, components = calculator.get_current_stress(df)
+        for name, value in components.items():
+            print(f"  {name}: {value:.3f} (weight: {calculator.weights[name]})")
+
+        # Find high-stress periods
+        high_stress = calculator.find_high_stress_periods(df, threshold=0.7)
+        print(f"\nHigh-stress periods found: {len(high_stress)}")
+        if not high_stress.empty:
+            print(high_stress.head())

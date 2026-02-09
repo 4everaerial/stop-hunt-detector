@@ -1,232 +1,197 @@
 """
-Continuation failure signal.
+Continuation Failure Signal
 
-Measures momentum vs price divergence. When momentum fades but price holds,
-markets are fragile.
+Detects when momentum indicators diverge from price action -
+prices move but momentum doesn't follow, suggesting weakness.
+
+Mechanism:
+- RSI divergence: Price makes new high/low, RSI doesn't
+- MACD divergence: Price vs MACD histogram
+- Momentum deceleration: Rate of change slows
+
+Score: 0.0 (strong continuation) → 1.0 (divergence/weakness)
 """
 
 import pandas as pd
 import numpy as np
+from typing import Tuple
 
 
-def calculate_rsi(df, period=14):
+class ContinuationFailure:
     """
-    Calculate Relative Strength Index (RSI).
+    Measures continuation failure / momentum divergence.
 
-    Args:
-        df: DataFrame with close prices
-        period: RSI period
-
-    Returns:
-        Series with RSI values
+    High continuation failure indicates that price moves lack
+    underlying momentum, often seen before reversals.
     """
-    close = df['close']
 
-    # Calculate price changes
-    delta = close.diff()
-
-    # Separate gains and losses
-    gains = delta.where(delta > 0, 0)
-    losses = -delta.where(delta < 0, 0)
-
-    # Calculate average gains and losses
-    avg_gains = gains.rolling(window=period).mean()
-    avg_losses = losses.rolling(window=period).mean()
-
-    # Calculate RSI
-    rs = avg_gains / avg_losses
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
-
-
-def calculate_rsi_divergence(df, period=14):
-    """
-    Calculate RSI divergence.
-
-    Compares price trend to RSI trend. Divergence indicates weakening momentum.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: RSI period
-
-    Returns:
-        Series with divergence score (0-1, higher = more divergence)
-    """
-    rsi = calculate_rsi(df, period)
-    close = df['close']
-
-    # Calculate trend over 20 periods
-    price_trend = close.pct_change(20)
-    rsi_trend = rsi.diff(20)
-
-    # Divergence: opposite trends
-    divergence = abs(price_trend * rsi_trend)
-
-    # Normalize
-    divergence_norm = divergence / divergence.rolling(window=50).max()
-
-    return divergence_norm
-
-
-def calculate_macd(df, fast=12, slow=26, signal=9):
-    """
-    Calculate MACD (Moving Average Convergence Divergence).
-
-    Args:
-        df: DataFrame with close prices
-        fast: Fast EMA period
-        slow: Slow EMA period
-        signal: Signal line period
-
-    Returns:
-        Tuple of (macd, signal, histogram)
-    """
-    close = df['close']
-
-    # Calculate EMAs
-    ema_fast = close.ewm(span=fast, adjust=False).mean()
-    ema_slow = close.ewm(span=slow, adjust=False).mean()
-
-    # Calculate MACD line
-    macd = ema_fast - ema_slow
-
-    # Calculate signal line
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-
-    # Calculate histogram
-    histogram = macd - signal_line
-
-    return macd, signal_line, histogram
-
-
-def calculate_macd_divergence(df, fast=12, slow=26, signal=9):
-    """
-    Calculate MACD divergence.
-
-    Args:
-        df: DataFrame with OHLCV data
-        fast: Fast EMA period
-        slow: Slow EMA period
-        signal: Signal line period
-
-    Returns:
-        Series with divergence score (0-1, higher = more divergence)
-    """
-    macd, signal_line, _ = calculate_macd(df, fast, slow, signal)
-    close = df['close']
-
-    # Calculate trend over 20 periods
-    price_trend = close.pct_change(20)
-    macd_trend = macd.diff(20)
-
-    # Divergence: opposite trends
-    divergence = abs(price_trend * macd_trend)
-
-    # Normalize
-    divergence_norm = divergence / divergence.rolling(window=50).max()
-
-    return divergence_norm
-
-
-def calculate_volume_price_divergence(df, period=20):
-    """
-    Calculate volume vs price divergence.
-
-    When volume trends opposite to price, indicates weak continuation.
-
-    Args:
-        df: DataFrame with OHLCV data
-        period: Lookback period
-
-    Returns:
-        Series with divergence score (0-1, higher = more divergence)
-    """
-    price_trend = df['close'].pct_change(period)
-    volume_trend = df['volume'].pct_change(period)
-
-    # Divergence: opposite trends
-    divergence = abs(price_trend * volume_trend)
-
-    # Normalize
-    divergence_norm = divergence / divergence.rolling(window=50).max()
-
-    return divergence_norm
-
-
-class ContinuationSignal:
-    """Calculate continuation failure stress signal."""
-
-    def __init__(self, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, period=20):
+    def __init__(
+        self,
+        rsi_period: int = 14,
+        macd_fast: int = 12,
+        macd_slow: int = 26,
+        macd_signal: int = 9,
+        lookback: int = 20
+    ):
         """
-        Initialize continuation signal.
+        Initialize continuation failure detector.
 
         Args:
-            rsi_period: RSI period
-            macd_fast: MACD fast EMA
-            macd_slow: MACD slow EMA
-            macd_signal: MACD signal period
-            period: Divergence lookback period
+            rsi_period: RSI period (default: 14)
+            macd_fast: MACD fast EMA period (default: 12)
+            macd_slow: MACD slow EMA period (default: 26)
+            macd_signal: MACD signal EMA period (default: 9)
+            lookback: Lookback period for divergence detection (default: 20)
         """
         self.rsi_period = rsi_period
         self.macd_fast = macd_fast
         self.macd_slow = macd_slow
         self.macd_signal = macd_signal
-        self.period = period
+        self.lookback = lookback
 
-    def calculate(self, df):
+    def calculate(self, df: pd.DataFrame) -> pd.Series:
         """
-        Calculate continuation failure signal.
+        Calculate continuation failure score for each candle.
 
-        Returns DataFrame with new columns:
-        - rsi_divergence: RSI divergence score
-        - macd_divergence: MACD divergence score
-        - volume_divergence: Volume-price divergence score
-        - continuation_score: Normalized stress score (0-1)
+        Args:
+            df: DataFrame with OHLCV data (columns: close)
+
+        Returns:
+            Series of continuation failure scores (0.0 → 1.0)
+        """
+        df = df.copy()
+
+        # Calculate RSI
+        df['rsi'] = self._calculate_rsi(df['close'], self.rsi_period)
+
+        # Calculate MACD
+        df['macd'], df['macd_signal'], df['macd_hist'] = self._calculate_macd(df['close'])
+
+        # Calculate Rate of Change (momentum)
+        df['roc'] = df['close'].pct_change(self.lookback)
+
+        # Detect divergences
+        df['rsi_divergence'] = self._detect_divergence(df['close'], df['rsi'])
+        df['macd_divergence'] = self._detect_divergence(df['close'], df['macd_hist'])
+
+        # Momentum deceleration: ROC magnitude vs price change magnitude
+        df['price_change_abs'] = df['close'].diff().abs()
+        df['roc_abs'] = df['roc'].abs()
+        df['momentum_decel'] = self._normalize_momentum_deceleration(
+            df['price_change_abs'],
+            df['roc_abs']
+        )
+
+        # Composite score
+        df['continuation_failure'] = (
+            df['rsi_divergence'] * 0.4 +
+            df['macd_divergence'] * 0.3 +
+            df['momentum_decel'] * 0.3
+        )
+
+        return df['continuation_failure']
+
+    def _calculate_rsi(self, prices: pd.Series, period: int) -> pd.Series:
+        """Calculate RSI (Relative Strength Index)."""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def _calculate_macd(self, prices: pd.Series) -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """Calculate MACD (Moving Average Convergence Divergence)."""
+        ema_fast = prices.ewm(span=self.macd_fast).mean()
+        ema_slow = prices.ewm(span=self.macd_slow).mean()
+        macd = ema_fast - ema_slow
+        macd_signal = macd.ewm(span=self.macd_signal).mean()
+        macd_hist = macd - macd_signal
+        return macd, macd_signal, macd_hist
+
+    def _detect_divergence(self, price: pd.Series, indicator: pd.Series) -> pd.Series:
+        """
+        Detect divergence between price and indicator.
+
+        Returns 1.0 if divergence detected, 0.0 otherwise.
+        """
+        # Simple divergence: price makes new high but indicator doesn't (bearish)
+        # or price makes new low but indicator doesn't (bullish)
+        lookback = 5
+
+        price_high = price.rolling(lookback).max()
+        price_low = price.rolling(lookback).min()
+
+        ind_high = indicator.rolling(lookback).max()
+        ind_low = indicator.rolling(lookback).min()
+
+        # Bearish divergence: price at high, indicator not at high
+        bearish = (price == price_high) & (indicator < ind_high)
+
+        # Bullish divergence: price at low, indicator not at low
+        bullish = (price == price_low) & (indicator > ind_low)
+
+        divergence = bearish | bullish
+
+        return divergence.astype(float)
+
+    def _normalize_momentum_deceleration(
+        self,
+        price_change: pd.Series,
+        roc: pd.Series
+    ) -> pd.Series:
+        """
+        Normalize momentum deceleration.
+
+        High price change with low ROC suggests momentum is fading.
+        """
+        # Normalize both to 0-1
+        price_norm = self._rolling_normalize(price_change.rolling(self.lookback))
+        roc_norm = self._rolling_normalize(roc.rolling(self.lookback))
+
+        # Momentum deceleration: high price move but low ROC
+        decel = price_norm * (1 - roc_norm)
+
+        return decel
+
+    def _rolling_normalize(self, rolling_obj) -> pd.Series:
+        """Normalize rolling series to 0-1."""
+        series = rolling_obj.min()
+        rolling_max = rolling_obj.max()
+        rolling_min = rolling_obj.min()
+
+        normalized = np.where(
+            rolling_max == rolling_min,
+            0.5,
+            (series - rolling_min) / (rolling_max - rolling_min)
+        )
+
+        return pd.Series(normalized, index=series.index)
+
+    def get_current_state(self, df: pd.DataFrame) -> Tuple[float, str]:
+        """
+        Get current continuation failure score and label.
 
         Args:
             df: DataFrame with OHLCV data
 
         Returns:
-            DataFrame with continuation signals
+            Tuple of (score, label)
         """
-        df = df.copy()
+        if len(df) < self.lookback + self.macd_slow:
+            return 0.0, "INSUFFICIENT_DATA"
 
-        # Calculate individual indicators
-        df['rsi_divergence'] = calculate_rsi_divergence(df, self.rsi_period)
-        df['macd_divergence'] = calculate_macd_divergence(
-            df, self.macd_fast, self.macd_slow, self.macd_signal
-        )
-        df['volume_divergence'] = calculate_volume_price_divergence(df, self.period)
+        cf = self.calculate(df)
+        latest_score = cf.iloc[-1]
 
-        # Composite continuation score (equal weights)
-        df['continuation_score'] = (
-            df['rsi_divergence'].fillna(0) * 0.34 +
-            df['macd_divergence'].fillna(0) * 0.33 +
-            df['volume_divergence'].fillna(0) * 0.33
-        )
+        if latest_score < 0.3:
+            label = "STRONG"
+        elif latest_score < 0.6:
+            label = "NORMAL"
+        elif latest_score < 0.8:
+            label = "WEAK"
+        else:
+            label = "FAILING"
 
-        # Clip to 0-1 range
-        df['continuation_score'] = df['continuation_score'].clip(0, 1)
-
-        return df
-
-
-# Backward compatibility
-def calculate_continuation_signal(df, rsi_period=14, macd_fast=12, macd_slow=26, macd_signal=9, period=20):
-    """
-    Calculate continuation failure signal (functional API).
-
-    Args:
-        df: DataFrame with OHLCV data
-        rsi_period: RSI period
-        macd_fast: MACD fast EMA
-        macd_slow: MACD slow EMA
-        macd_signal: MACD signal period
-        period: Divergence lookback period
-
-    Returns:
-        DataFrame with continuation signals
-    """
-    signal = ContinuationSignal(rsi_period, macd_fast, macd_slow, macd_signal, period)
-    return signal.calculate(df)
+        return latest_score, label
