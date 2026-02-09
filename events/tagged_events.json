@@ -1,0 +1,49 @@
+{
+  "events": [
+    {
+      "timestamp": "2022-05-09T23:00:00Z",
+      "pair": "BTCUSDT",
+      "event_type": "liquidation",
+      "magnitude": 9.5,
+      "notes": "Terra/Luna collapse cascade",
+      "sources": ["news", "on-chain"]
+    },
+    {
+      "timestamp": "2022-11-08T16:00:00Z",
+      "pair": "BTCUSDT",
+      "event_type": "liquidation",
+      "magnitude": 7.8,
+      "notes": "FTX collapse",
+      "sources": ["news"]
+    },
+    {
+      "timestamp": "2023-03-10T14:00:00Z",
+      "pair": "BTCUSDT",
+      "event_type": "liquidation",
+      "magnitude": 6.2,
+      "notes": "SVB banking crisis",
+      "sources": ["news"]
+    },
+    {
+      "timestamp": "2023-06-10T18:00:00Z",
+      "pair": "BTCUSDT",
+      "event_type": "liquidation",
+      "magnitude": 5.1,
+      "notes": "SEC lawsuit against Binance/Coinbase",
+      "sources": ["news"]
+    },
+    {
+      "timestamp": "2024-01-23T12:00:00Z",
+      "pair": "BTCUSDT",
+      "event_type": "liquidation",
+      "magnitude": 4.8,
+      "notes": "ETF approval volatility",
+      "sources": ["news"]
+    }
+  ],
+  "metadata": {
+    "created_at": "2026-02-09T22:57:00Z",
+    "description": "Tagged liquidation events for validation",
+    "instructions": "Add events with timestamps in ISO 8601 format. Magnitude is % price drop within 24h window."
+  }
+}
