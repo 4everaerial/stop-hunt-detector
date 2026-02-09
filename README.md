@@ -99,6 +99,69 @@ python validation/backtest.py
 
 ---
 
+## Detailed Methodology
+
+### Signal Calculations
+
+**1. Volatility Compression (35% weight)**
+- Bollinger Band squeeze: Width = (Upper - Lower) / SMA
+- ATR decay: True Range normalized by rolling window
+- Range contraction: (High - Low) / Close
+- Inverse normalized → tight ranges → high compression
+
+**2. Liquidity Fragility (35% weight)**
+- Wick-to-body ratio: (Upper wick + Lower wick) / Body
+- Volume-to-range ratio: Volume / (High - Low)
+- Rejection magnitude: (Upper wick + Lower wick) / Total range
+- High ratios → thin order books → fragility
+
+**3. Continuation Failure (15% weight)**
+- RSI divergence: Price makes high, RSI doesn't
+- MACD divergence: Price vs MACD histogram mismatch
+- Momentum deceleration: Price change vs ROC ratio
+- Divergence → weak momentum → continuation failure
+
+**4. Speed Asymmetry (15% weight)**
+- Downward velocity: Sum of negative candles / window
+- Upward velocity: Sum of positive candles / window
+- Magnitude asymmetry: Down move size / total move size
+- Candle count bias: Down candles / total candles
+- Downward bias → panic selling/liquidations
+
+### Stress Score Computation
+
+```
+Stress Score = 0.35 × Volatility +
+              0.35 × Liquidity +
+              0.15 × Continuation +
+              0.15 × Speed
+```
+
+All signals normalized to 0.0 → 1.0 before weighting.
+
+### State Thresholds
+
+| State | Stress Range | Interpretation |
+|-------|-------------|---------------|
+| NORMAL | 0.0 - 0.3 | Calm market, no stress indicators |
+| STRESSED | 0.3 - 0.6 | Moderate compression or fragility |
+| FRAGILE | 0.6 - 0.8 | Multiple stress conditions present |
+| IMMINENT_CLEARING | 0.8 - 1.0 | High probability of forced liquidation |
+
+---
+
+## Scripts & Tools
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/visualize_stress.py` | Generate stress score plots, distribution charts, heatmaps |
+| `scripts/tune_weights.py` | Empirical weight tuning on simulated data |
+| `scripts/full_pipeline_demo.py` | Demonstrate complete detector pipeline from data to report |
+| `data/mock_generator.py` | Generate basic synthetic stress events for testing |
+| `data/mock_generator_enhanced.py` | Generate enhanced realistic stress event data |
+
+---
+
 ## Validation Plan
 
 **Success Criteria:**
@@ -142,8 +205,15 @@ MIT License — See [LICENSE](LICENSE)
 - [x] Labeled state output
 - [x] Validation framework (backtest, correlation, report)
 
-**Day 2 (Upcoming):**
-- [ ] Fine-tune signal weights empirically
-- [ ] Test on multiple pairs
-- [ ] Generate stress score visualizations
-- [ ] Document methodology in README
+**Day 2 (Complete):**
+- [x] Empirical weight tuning (stress-focused: 35/35/15/15)
+- [x] Stress score visualizations (main plot, distribution, heatmap)
+- [x] Full pipeline demonstration script
+- [x] Methodology documentation
+- [x] Enhanced mock data generator
+
+**Day 3 (Upcoming):**
+- [ ] Historical data pipeline for real validation
+- [ ] Event tagging system (10-20 historical liquidation events)
+- [ ] Backtesting on multiple events
+- [ ] Correlation metrics refinement

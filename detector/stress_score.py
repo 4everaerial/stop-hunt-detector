@@ -24,12 +24,14 @@ class StressCalculator:
     forced-liquidation / stop-hunt events based on market conditions.
     """
 
-    # Signal weights (can be tuned empirically)
+    # Signal weights (empirically tuned via weight_tuner.py)
+    # Top performer on simulated stress events:
+    # volatility: 35%, liquidity: 35%, continuation: 15%, speed: 15%
     DEFAULT_WEIGHTS = {
-        'volatility': 0.3,      # Volatility compression
-        'liquidity': 0.3,       # Liquidity fragility
-        'continuation': 0.2,    # Continuation failure
-        'speed': 0.2            # Speed asymmetry
+        'volatility': 0.35,     # Volatility compression
+        'liquidity': 0.35,      # Liquidity fragility
+        'continuation': 0.15,   # Continuation failure
+        'speed': 0.15           # Speed asymmetry
     }
 
     def __init__(
