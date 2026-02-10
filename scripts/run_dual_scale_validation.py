@@ -324,7 +324,7 @@ def run_dual_scale_validation():
         print("2D State Distribution at Events:")
         for state_2d, count in all_results['global_metrics']['state_2d_distribution'].items():
             pct = (count / len(all_results['events'])) * 100
-            print(f"  {state_2d[0]} × {state_2d[1]}: {count} events ({pct:.1f}%)")
+            print(f"  {state_2d}: {count} events ({pct:.1f}%)")
 
     # Save results
     print()
