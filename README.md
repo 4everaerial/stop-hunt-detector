@@ -63,6 +63,7 @@ stop-hunt-detector/
 │   ├── fetch_coinbase.py       # OHLCV data (primary data source)
 │   ├── fetch_open_interest.py   # Open interest context (NEW)
 │   ├── fetch_funding_rates.py  # Funding rates context (NEW)
+│   ├── fetch_onchain.py         # On-chain metrics context (NEW)
 │   └── historical/            # Cached OHLCV data
 ├── signals/
 │   ├── volatility.py           # Volatility compression signal
@@ -133,6 +134,12 @@ stop-hunt-detector/
 - **Purpose:** Track perpetual futures funding
 - **Usage:** Context only — NOT used in stress scoring
 
+### On-Chain Metrics
+- **File:** `data/fetch_onchain.py`
+- **Source:** Coin Metrics Community API (public)
+- **Purpose:** Stateful chain metrics (supply, active addresses, transfer value)
+- **Usage:** Context only — NOT used in stress scoring
+
 ### Context Snapshot
 - **File:** `context/snapshot.py`
 - **Purpose:** Align all streams on common timestamp
@@ -166,6 +173,7 @@ df['fast_stress'] = calculator.calculate(df)
 ```python
 from data.fetch_open_interest import OpenInterestFetcher
 from data.fetch_funding_rates import FundingRatesFetcher
+from data.fetch_onchain import OnChainFetcher
 
 # Fetch context
 oi_fetcher = OpenInterestFetcher()
@@ -174,6 +182,9 @@ oi_df = oi_fetcher.fetch_historical('BTCUSDT', '1h', hours=720)
 fr_fetcher = FundingRatesFetcher()
 fr_df = fr_fetcher.fetch_historical('BTCUSDT', hours=720)
 
+onchain_fetcher = OnChainFetcher()
+onchain_df = onchain_fetcher.fetch_metrics(asset='btc', frequency='1d')
+
 # Align context
 from context.snapshot import ContextSnapshot
 
@@ -181,6 +192,7 @@ snapshot = ContextSnapshot()
 snapshot.add_fast_stress(df[['timestamp', 'fast_stress']])
 snapshot.add_open_interest(oi_df)
 snapshot.add_funding_rates(fr_df)
+snapshot.add_onchain(onchain_df)
 aligned_df = snapshot.align()
 ```
 
