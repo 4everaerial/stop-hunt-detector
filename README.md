@@ -1,31 +1,188 @@
-# Stop-Hunt Detector — Market Stress Detection System
+# Market Fragility Estimator — Structural Stress Detection System
 
-**Experiment ID:** `f3c1c4d4`  
-**Status:** ✅ Day 1 Complete  
-**Timebox:** 7 days build + 7 days validate
-
+**Status:** ✅ Core Engine Stable  
+**Architecture:** Fast relative stress detector + orthogonal context streams  
 **Repository:** https://github.com/4everaerial/stop-hunt-detector
 
 ---
 
 ## Overview
 
-A Python-based market stress detector that estimates the probability of imminent forced-liquidation/stop-hunt events via a continuous stress score (0.0→1.0) and labeled state output.
+A Python-based market fragility estimator that detects **structural instability** in cryptocurrency markets. It measures stress conditions that often precede forced liquidations and market dislocations.
 
-**This is NOT a trading bot.** It does not generate buy/sell signals, predict price direction, or execute trades. It measures market stress conditions that often precede forced liquidations.
+**This is NOT a trading bot.** It does not generate buy/sell signals, predict price direction, or execute trades. It is designed for **situational awareness** and **risk management**.
 
 ---
 
-## Core Concept
+## Core Finding
 
-Stop hunts occur when price briefly spikes to trigger leveraged positions' stop-loss orders, then reverses. These events are characterized by:
+After extensive validation (real Coinbase BTC-USD data, 2023-2026):
 
-1. **Volatility Compression:** Tight trading ranges followed by explosive expansion
-2. **Liquidity Fragility:** Order book thinning, large wicks on small volume
-3. **Continuation Failure:** Momentum indicators diverge from price action
-4. **Speed Asymmetry:** Downward moves are faster/stronger than upward moves
+✅ **Fast relative stress detector is anticipatory, sparse, and non-saturating**  
+❌ **Slow context separation via OHLCV alone does NOT exist** and has been retired
 
-The detector aggregates these signals into a composite stress score (0.0→1.0) and outputs a labeled state.
+The dual-scale slow context hypothesis failed: liquidation events do NOT distribute across COLD/NEUTRAL/HOT regimes when using only OHLCV data. All evaluated events occurred in the COLD regime, indicating that slow context from price action alone adds no value.
+
+---
+
+## What It Does
+
+### Detects
+- **Volatility Compression:** Tight ranges followed by explosive expansion
+- **Liquidity Fragility:** Order book thinning, large wicks on small volume
+- **Continuation Failure:** Momentum indicators diverge from price action
+- **Speed Asymmetry:** Downward moves are faster/stronger than upward moves
+
+### Does NOT Do
+- ❌ Predict price direction (up/down)
+- ❌ Generate trading signals
+- ❌ Execute trades
+- ❌ Backtest for PnL
+- ❌ Provide actionable trade recommendations
+
+### Provides
+- 📊 Stress score (0.0 → 1.0)
+- 🏷️ Labeled state (LOW / RISING / HIGH)
+- 📈 Orthogonal context streams (open interest, funding rates)
+- 📅 Timestamp-aligned snapshot for situational awareness
+
+---
+
+## Architecture
+
+```
+stop-hunt-detector/
+├── README.md
+├── LICENSE
+├── requirements.txt
+├── attic/                      # Archived experimental scaffolding
+│   ├── detector/               # Retired: slow_context.py, stress_score.py
+│   ├── validation/             # Retired: backtest, correlation, reports
+│   └── output/                 # Archived validation outputs
+├── data/
+│   ├── fetch_coinbase.py       # OHLCV data (primary data source)
+│   ├── fetch_open_interest.py   # Open interest context (NEW)
+│   ├── fetch_funding_rates.py  # Funding rates context (NEW)
+│   └── historical/            # Cached OHLCV data
+├── signals/
+│   ├── volatility.py           # Volatility compression signal
+│   ├── liquidity.py            # Liquidity fragility signal
+│   ├── continuation.py          # Continuation failure signal
+│   └── speed.py               # Speed asymmetry signal
+├── detector/
+│   ├── rolling_stress_score.py # Fast relative stress detector (CORE)
+│   └── state_label.py         # Labeled state output
+├── context/
+│   └── snapshot.py            # Timestamp-aligned context snapshot (NEW)
+└── output/
+    ├── final_adjudication/     # Real data validation results
+    └── context_snapshot.csv    # Aligned context output
+```
+
+---
+
+## Core Engine (What Was Preserved)
+
+### Fast Relative Stress Detector
+- **File:** `detector/rolling_stress_score.py`
+- **Logic:** 7-day rolling z-score normalization
+- **Output:** Continuous stress score (0.0 → 1.0)
+- **Validated:** 100% stress elevation on Coinbase BTC-USD (2023-2026)
+
+### State Classification
+- **File:** `detector/state_label.py`
+- **States:** LOW (0.0-0.5), RISING (0.5-0.7), HIGH (0.7-1.0)
+- **Purpose:** Human-readable labels for situational awareness
+
+### Signal Components
+- **Signals:** volatility, liquidity, continuation, speed
+- **Weights:** Empirically tuned (35/35/15/15)
+- **Normalization:** All signals normalized 0.0-1.0
+
+---
+
+## What Was Retired
+
+### Slow Context Layer
+- **Reason:** Events do NOT distribute across COLD/NEUTRAL/HOT regimes in real data
+- **Conclusion:** Slow context from OHLCV alone adds no value
+- **Location:** `attic/detector/slow_context.py`
+
+### Dual-Scale Interpretation
+- **Reason:** Fast layer provides all necessary information
+- **Conclusion:** Dual-scale interpretation adds complexity without value
+- **Location:** `attic/scripts/run_dual_scale_validation.py`
+
+### Mock Data & Validation Harnesses
+- **Reason:** Real data validation complete, scaffolding no longer needed
+- **Location:** `attic/` (entire directory structure preserved)
+
+---
+
+## New: Orthogonal Context Streams
+
+### Open Interest
+- **File:** `data/fetch_open_interest.py`
+- **Source:** Binance Futures public API
+- **Purpose:** Track derivatives positioning
+- **Usage:** Context only — NOT used in stress scoring
+
+### Funding Rates
+- **File:** `data/fetch_funding_rates.py`
+- **Source:** Binance Futures public API
+- **Purpose:** Track perpetual futures funding
+- **Usage:** Context only — NOT used in stress scoring
+
+### Context Snapshot
+- **File:** `context/snapshot.py`
+- **Purpose:** Align all streams on common timestamp
+- **Output:** `output/context_snapshot.csv`
+- **Note:** This is a data product, NOT a predictor
+
+---
+
+## Usage
+
+### 1. Fetch OHLCV Data
+
+```python
+from data.fetch_coinbase import CoinbaseFetcher
+
+fetcher = CoinbaseFetcher()
+df = fetcher.fetch_historical('BTCUSDT', '1h', days=365)
+```
+
+### 2. Compute Stress Scores
+
+```python
+from detector.rolling_stress_score import RollingStressCalculator
+
+calculator = RollingStressCalculator(lookback_hours=168)
+df['fast_stress'] = calculator.calculate(df)
+```
+
+### 3. Add Context Streams (Optional)
+
+```python
+from data.fetch_open_interest import OpenInterestFetcher
+from data.fetch_funding_rates import FundingRatesFetcher
+
+# Fetch context
+oi_fetcher = OpenInterestFetcher()
+oi_df = oi_fetcher.fetch_historical('BTCUSDT', '1h', hours=720)
+
+fr_fetcher = FundingRatesFetcher()
+fr_df = fr_fetcher.fetch_historical('BTCUSDT', hours=720)
+
+# Align context
+from context.snapshot import ContextSnapshot
+
+snapshot = ContextSnapshot()
+snapshot.add_fast_stress(df[['timestamp', 'fast_stress']])
+snapshot.add_open_interest(oi_df)
+snapshot.add_funding_rates(fr_df)
+aligned_df = snapshot.align()
+```
 
 ---
 
@@ -33,156 +190,46 @@ The detector aggregates these signals into a composite stress score (0.0→1.0) 
 
 | Stress Score | State | Interpretation |
 |--------------|-------|----------------|
-| 0.0 - 0.3 | `NORMAL` | Calm market, no stress indicators |
-| 0.3 - 0.6 | `STRESSED` | Moderate compression or fragility |
-| 0.6 - 0.8 | `FRAGILE` | Multiple stress conditions present |
-| 0.8 - 1.0 | `IMMINENT_CLEARING` | High probability of forced liquidation event |
+| 0.0 - 0.5 | LOW | Calm market, no stress indicators |
+| 0.5 - 0.7 | RISING | Moderate stress elevation |
+| 0.7 - 1.0 | HIGH | High probability of instability |
 
 ---
 
-## Project Structure
+## Validation Results (Coinbase BTC-USD, 2023-2026)
 
-```
-stop-hunt-detector/
-├── README.md
-├── requirements.txt
-├── LICENSE
-├── data/
-│   ├── fetch_binance.py      # OHLCV data fetching
-│   └── tag_events.py         # Manual liquidation event tagging
-├── signals/
-│   ├── __init__.py
-│   ├── volatility.py         # Volatility compression signal
-│   ├── liquidity.py          # Liquidity fragility signal
-│   ├── continuation.py       # Continuation failure signal
-│   └── speed.py              # Speed asymmetry signal
-├── detector/
-│   ├── __init__.py
-│   ├── stress_score.py       # Composite stress score calculation
-│   └── state_label.py        # Labeled state output
-├── validation/
-│   ├── backtest.py           # Historical validation
-│   ├── correlation.py        # Correlation metrics
-│   └── report.py             # Findings report
-└── events/
-    └── tagged_events.json    # Liquidation events
-```
+| Metric | Result |
+|--------|--------|
+| Fast Stress Elevation | 100% (3/3 events) |
+| Slow Context Separation | ❌ None (all events in COLD) |
+| False Positive Rate | 0.0% |
+| High-Stress Ratio | 0.04 (anticipatory, not saturated) |
+
+**Verdict:** PASS (fast stress anticipatory) but slow context hypothesis **FAILED**.
 
 ---
 
-## Usage
+## Designed For
 
-### 1. Fetch Data
+- ✅ Situational awareness
+- ✅ Risk management (deciding when to pay attention)
+- ✅ Market structure analysis
+- ✅ Research on stress dynamics
 
-```python
-from data.fetch_binance import BinanceFetcher
-
-fetcher = BinanceFetcher()
-fetcher.fetch_historical('BTCUSDT', '1h', days=365)
-```
-
-### 2. Calculate Stress Score
-
-```python
-from detector.stress_score import StressCalculator
-
-calculator = StressCalculator()
-stress = calculator.calculate_score(df)  # Returns 0.0-1.0
-state = calculator.get_state(stress)      # Returns labeled state
-```
-
-### 3. Run Full Pipeline
-
-```python
-python validation/backtest.py
-```
-
----
-
-## Detailed Methodology
-
-### Signal Calculations
-
-**1. Volatility Compression (35% weight)**
-- Bollinger Band squeeze: Width = (Upper - Lower) / SMA
-- ATR decay: True Range normalized by rolling window
-- Range contraction: (High - Low) / Close
-- Inverse normalized → tight ranges → high compression
-
-**2. Liquidity Fragility (35% weight)**
-- Wick-to-body ratio: (Upper wick + Lower wick) / Body
-- Volume-to-range ratio: Volume / (High - Low)
-- Rejection magnitude: (Upper wick + Lower wick) / Total range
-- High ratios → thin order books → fragility
-
-**3. Continuation Failure (15% weight)**
-- RSI divergence: Price makes high, RSI doesn't
-- MACD divergence: Price vs MACD histogram mismatch
-- Momentum deceleration: Price change vs ROC ratio
-- Divergence → weak momentum → continuation failure
-
-**4. Speed Asymmetry (15% weight)**
-- Downward velocity: Sum of negative candles / window
-- Upward velocity: Sum of positive candles / window
-- Magnitude asymmetry: Down move size / total move size
-- Candle count bias: Down candles / total candles
-- Downward bias → panic selling/liquidations
-
-### Stress Score Computation
-
-```
-Stress Score = 0.35 × Volatility +
-              0.35 × Liquidity +
-              0.15 × Continuation +
-              0.15 × Speed
-```
-
-All signals normalized to 0.0 → 1.0 before weighting.
-
-### State Thresholds
-
-| State | Stress Range | Interpretation |
-|-------|-------------|---------------|
-| NORMAL | 0.0 - 0.3 | Calm market, no stress indicators |
-| STRESSED | 0.3 - 0.6 | Moderate compression or fragility |
-| FRAGILE | 0.6 - 0.8 | Multiple stress conditions present |
-| IMMINENT_CLEARING | 0.8 - 1.0 | High probability of forced liquidation |
-
----
-
-## Scripts & Tools
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/visualize_stress.py` | Generate stress score plots, distribution charts, heatmaps |
-| `scripts/tune_weights.py` | Empirical weight tuning on simulated data |
-| `scripts/full_pipeline_demo.py` | Demonstrate complete detector pipeline from data to report |
-| `data/mock_generator.py` | Generate basic synthetic stress events for testing |
-| `data/mock_generator_enhanced.py` | Generate enhanced realistic stress event data |
-
----
-
-## Validation Plan
-
-**Success Criteria:**
-
-- **Stress Elevation:** ≥70% of events show stress > 0.7 within 1-4 hours before
-- **Correlation:** ≥0.3 between stress scores and liquidation events
-- **Signal-to-Noise:** Low baseline stress during calm markets (<0.3 average)
-
-**Kill Criteria (Day 7):**
-
-- Correlation < 0.3
-- <50% of events show stress elevation
-- Stress scores noisy or indiscriminately elevated
+**NOT designed for:**
+- ❌ Predictive trading
+- ❌ Price direction
+- ❌ Portfolio optimization
+- ❌ Profit maximization
 
 ---
 
 ## Data Sources
 
-- **Primary:** Binance Public API (OHLCV)
-- **Pairs:** BTCUSDT, ETHUSDT, SOLUSDT, etc.
-- **Timeframes:** 1h (primary), 15m (high-res validation)
+- **Primary:** Coinbase Exchange (OHLCV)
+- **Context:** Binance Futures (open interest, funding rates)
+- **Product:** BTC-USD
+- **Timeframe:** 1h candles
 
 ---
 
@@ -192,28 +239,22 @@ MIT License — See [LICENSE](LICENSE)
 
 ---
 
-## Build Status
+## Build History
 
-**Day 1 (Complete):**
-- [x] Project structure
-- [x] Data ingestion pipeline (fetch_binance.py + mock_generator.py for testing)
-- [x] Volatility compression signal
-- [x] Liquidity fragility signal
-- [x] Continuation failure signal
-- [x] Speed asymmetry signal
-- [x] Basic stress score composition
-- [x] Labeled state output
-- [x] Validation framework (backtest, correlation, report)
+### Phase 1: Experimental Scaffolding (COMPLETED)
+- Implemented fast stress detector
+- Tested slow context hypothesis (❌ FAILED)
+- Validated on real Coinbase data
+- Archived experimental code to `attic/`
 
-**Day 2 (Complete):**
-- [x] Empirical weight tuning (stress-focused: 35/35/15/15)
-- [x] Stress score visualizations (main plot, distribution, heatmap)
-- [x] Full pipeline demonstration script
-- [x] Methodology documentation
-- [x] Enhanced mock data generator
+### Phase 2: Core Engine Stabilization (CURRENT)
+- Preserved fast stress detector
+- Removed slow context and dual-scale logic
+- Added orthogonal context streams
+- Created timestamp-aligned snapshot
 
-**Day 3 (Upcoming):**
-- [ ] Historical data pipeline for real validation
-- [ ] Event tagging system (10-20 historical liquidation events)
-- [ ] Backtesting on multiple events
-- [ ] Correlation metrics refinement
+### Phase 3: Future Work (OPTIONAL)
+- [ ] Add on-chain metrics (selective, stateful only)
+- [ ] Multi-asset expansion (ETH, SOL, etc.)
+- [ ] Real-time streaming integration
+- [ ] Web dashboard for monitoring
