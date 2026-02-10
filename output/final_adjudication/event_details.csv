@@ -1,0 +1,4 @@
+event_time,description,severity,fast_stress,slow_context,state_fast,state_slow,state_fast_2d,state_slow_2d,interpretation,pre_event_fast_max,fast_elevated
+2023-03-11 08:00:00,Silvergate Collapse,medium,,0.0,IMMINENT_CLEARING,COLD,HIGH,COLD,Clearing Likely,0.7393665870801103,True
+2023-06-05 08:00:00,SEC Suing Binance/Coinbase,medium,,0.0,IMMINENT_CLEARING,COLD,HIGH,COLD,Clearing Likely,0.7393665870801103,True
+2024-03-14 08:00:00,Bitcoin Halving Preceding Volatility,medium,,0.0,IMMINENT_CLEARING,COLD,HIGH,COLD,Clearing Likely,0.7393665870801103,True
